@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Simple folder icon for launcher -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M22,26 L38,26 L44,36 L86,36 C88.8,36 91,38.2 91,41 L91,79 C91,81.8 88.8,84 86,84 L22,84 C19.2,84 17,81.8 17,79 L17,31 C17,28.2 19.2,26 22,26 Z"/>
+</vector>

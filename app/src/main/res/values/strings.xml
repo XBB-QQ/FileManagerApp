@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">文件管理器</string>
+    <string name="nav_home">首页</string>
+    <string name="nav_browser">文件</string>
+    <string name="nav_search">搜索</string>
+    <string name="nav_recent">最近</string>
+    <string name="nav_apps">应用</string>
+</resources>
