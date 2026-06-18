@@ -427,6 +427,20 @@ class MainViewModel @Inject constructor(
     }
 
     /**
+     * Clear compress operation message.
+     */
+    fun clearCompressMessage() {
+        _uiState.update { it.copy(compressMessage = null) }
+    }
+
+    /**
+     * Clear extract operation message.
+     */
+    fun clearExtractMessage() {
+        _uiState.update { it.copy(extractMessage = null) }
+    }
+
+    /**
      * Compress selected files into a ZIP archive.
      * Falls back to compressing [singleFilePath] when called from context menu (no selection).
      */

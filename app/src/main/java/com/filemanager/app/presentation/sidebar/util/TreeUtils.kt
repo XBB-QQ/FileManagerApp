@@ -4,8 +4,7 @@ import com.filemanager.app.domain.model.FileItem
 import com.filemanager.app.domain.model.FileType
 import com.filemanager.app.domain.repository.FileRepository
 import com.filemanager.app.presentation.sidebar.model.SidebarTreeNode
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
 import java.io.File
 
 /**
@@ -20,7 +19,7 @@ object TreeUtils {
      */
     fun buildInitialTree(storagePath: String): SidebarTreeNode {
         val dir = File(storagePath)
-        val name = dir.nameIfNotBlank(storagePath)
+        val name = dir.name.takeIf { it.isNotBlank() } ?: storagePath
         return SidebarTreeNode(
             path = storagePath,
             name = name,
@@ -33,33 +32,35 @@ object TreeUtils {
 
     /**
      * Lazily load children for a directory node using FileRepository.
-     * Runs on IO dispatcher.
+     * Runs on IO dispatcher. Returns a Result wrapping the list of directory children.
      */
     suspend fun loadChildren(
         node: SidebarTreeNode,
         fileRepository: FileRepository
-    ): Result<List<SidebarTreeNode>> = withContext(Dispatchers.IO) {
-        Result.catch {
-            val fileItems = fileRepository.listFiles(node.path, showHidden = false).first()
-            fileItems.mapNotNull { item ->
-                if (item.type == FileType.DIRECTORY) {
-                    SidebarTreeNode(
-                        path = item.path,
-                        name = item.name,
-                        isDirectory = true,
-                        isExpanded = false,
-                        childrenLoaded = false,
-                        children = emptyList()
-                    )
-                } else {
-                    null // Only show directories in tree
-                }
-            }
+    ): Result<List<SidebarTreeNode>> {
+        val flowResult: Result<List<FileItem>> = try {
+            fileRepository.listFiles(node.path, showHidden = false).first()
+        } catch (e: Exception) {
+            return Result.failure(e)
         }
+        val fileItems: List<FileItem> = flowResult.getOrNull() ?: emptyList()
+        val children = fileItems.filter { it.type == FileType.DIRECTORY }
+        val treeNodeList = children.map { item ->
+            SidebarTreeNode(
+                path = item.path,
+                name = item.name,
+                isDirectory = true,
+                isExpanded = false,
+                childrenLoaded = false,
+                children = emptyList()
+            )
+        }
+        return Result.success(treeNodeList)
     }
 
     /**
-     * Toggle the expanded state of a node, triggering lazy load if needed.
+     * Toggle the expanded state of a node.
+     * Returns true if the node was expanded (caller should trigger lazy load if not loaded).
      */
     fun toggleExpand(node: SidebarTreeNode): Boolean {
         val newState = !node.isExpanded
@@ -68,15 +69,32 @@ object TreeUtils {
     }
 
     /**
-     * Check if any node in the tree matches the current path (for highlighting).
-     * Also marks the matched node's ancestors as expanded.
+     * Highlight the node matching currentPath and expand all ancestors.
+     * Used to keep the tree in sync when user navigates via the file list.
      */
-    fun highlightPath(rootNodes: List<SidebarTreeNode>, currentPath: String): List<SidebarTreeNode> {
+    fun highlightPath(
+        rootNodes: List<SidebarTreeNode>,
+        currentPath: String
+    ): List<SidebarTreeNode> {
         return rootNodes.map { node ->
             if (matchOrDescendant(node, currentPath)) {
                 markExpanded(node)
             } else {
-                node.copy(children = node.children.map { highlightPath(listOf(it)).first() })
+                node.copy(children = highlightChildren(node.children, currentPath))
+            }
+        }
+    }
+
+    /** Recursively highlight matching children. */
+    private fun highlightChildren(
+        children: List<SidebarTreeNode>,
+        currentPath: String
+    ): List<SidebarTreeNode> {
+        return children.map { child ->
+            if (matchOrDescendant(child, currentPath)) {
+                markExpanded(child)
+            } else {
+                child.copy(children = highlightChildren(child.children, currentPath))
             }
         }
     }
@@ -88,17 +106,16 @@ object TreeUtils {
         return node.children.any { matchOrDescendant(it, targetPath) }
     }
 
-    /** Mark this node and all ancestors as expanded for path visibility. */
+    /** Mark this node and all descendants as expanded for path visibility. */
     private fun markExpanded(node: SidebarTreeNode): SidebarTreeNode {
         node.isExpanded = true
-        return node.copy(children = node.children.map { markExpanded(it) })
+        return node.copy(children = markExpandedChildren(node.children))
     }
-}
 
-/**
- * Get the file name from path, returning [path] if empty.
- */
-private fun String.nameIfNotBlank(default: String): String {
-    val name = this.substringAfterLast('/')
-    return if (name.isNotBlank()) name else default
+    private fun markExpandedChildren(children: List<SidebarTreeNode>): List<SidebarTreeNode> {
+        return children.map { child ->
+            child.isExpanded = true
+            child.copy(children = markExpandedChildren(child.children))
+        }
+    }
 }

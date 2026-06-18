@@ -34,6 +34,7 @@ fun MainScreenContent(
     onNavigateToSettings: () -> Unit = {},
     onShareFile: (String) -> Unit = {},
     onShowSnackbar: (String) -> Unit = {},
+    onOpenSidebar: () -> Unit = {},
     viewModel: MainViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -74,18 +75,26 @@ fun MainScreenContent(
     uiState.compressMessage?.let { msg ->
         LaunchedEffect(msg) {
             onShowSnackbar(msg)
-            viewModel.clearError()
+            viewModel.clearCompressMessage()
         }
     }
     uiState.extractMessage?.let { msg ->
         LaunchedEffect(msg) {
             onShowSnackbar(msg)
-            viewModel.clearError()
+            viewModel.clearExtractMessage()
         }
     }
 
-    val ctx = LocalContext.current
-    val canInstallPackages = remember { android.provider.Settings.canRequestPackageInstalls(ctx) }
+    val localContext = LocalContext.current
+    val canInstallPackages = remember {
+        try {
+            android.provider.Settings::class.java
+                .getMethod("canRequestPackageInstalls", android.content.Context::class.java)
+                .invoke(null, localContext) as Boolean
+        } catch (e: Exception) {
+            false
+        }
+    }
 
     // Handle APK install dialog
     if (showApkInstallDialog && apkFilePath.isNotEmpty()) {
@@ -117,13 +126,13 @@ fun MainScreenContent(
                             val intent = Intent(Intent.ACTION_VIEW).apply {
                                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
                                 val uri = FileProvider.getUriForFile(
-                                    context,
-                                    "${context.packageName}.fileprovider",
+                                    localContext,
+                                    "${localContext.packageName}.fileprovider",
                                     file
                                 )
                                 setDataAndType(uri, "application/vnd.android.package-archive")
                             }
-                            context.startActivity(intent)
+                            localContext.startActivity(intent)
                         } catch (e: Exception) {
                             onShowSnackbar("安装失败: ${e.message}")
                         }
@@ -152,6 +161,11 @@ fun MainScreenContent(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onOpenSidebar) {
+                        Icon(Icons.Default.Menu, "文件夹导航")
+                    }
                 },
                 actions = {
                     IconButton(onClick = { showSortDialog = true }) {

@@ -1,7 +1,9 @@
 package com.filemanager.app
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -22,10 +24,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.composable
@@ -39,7 +43,10 @@ import com.filemanager.app.presentation.home.HomeScreen
 import com.filemanager.app.presentation.latest.LatestScreen
 import com.filemanager.app.presentation.main.MainBottomBar
 import com.filemanager.app.presentation.main.MainScreenContent
+import com.filemanager.app.presentation.main.MainViewModel
 import com.filemanager.app.presentation.main.MoreBottomSheet
+import com.filemanager.app.presentation.sidebar.SidebarDrawer
+import com.filemanager.app.presentation.sidebar.SidebarViewModel
 import com.filemanager.app.presentation.preview.AudioPreviewScreen
 import com.filemanager.app.presentation.preview.EnhancedImageViewer
 import com.filemanager.app.presentation.preview.EnhancedVideoPlayer
@@ -59,14 +66,14 @@ import kotlinx.coroutines.launch
  * Permission groups the app needs to read/write files.
  * Ordered from most specific (Android 13+) to most broad (legacy).
  */
-private val PERMISSIONS = run {
-    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+private val MEDIA_PERMISSIONS = run {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         arrayOf(
             android.Manifest.permission.READ_MEDIA_IMAGES,
             android.Manifest.permission.READ_MEDIA_VIDEO,
             android.Manifest.permission.READ_MEDIA_AUDIO
         )
-    } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
     } else {
         arrayOf(
@@ -82,10 +89,21 @@ private val PERMISSIONS = run {
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
-    private val permissionLauncher = registerForActivityResult(
+    private val mediaPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { _permissions ->
-        Log.d("MainActivity", "Permissions granted: $_permissions")
+    ) { permissions ->
+        val allGranted = permissions.values.all { it }
+        Log.d("MainActivity", "Media permissions granted: $permissions")
+        _allPermissionsGranted = allGranted
+        if (allGranted) {
+            checkManageStorage()
+        }
+    }
+
+    private val manageStorageLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        Log.d("MainActivity", "Manage storage result: ${it.resultCode}")
         _allPermissionsGranted = true
     }
 
@@ -93,6 +111,35 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var appPreferences: AppPreferences
+
+    private fun checkManageStorage() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (!Environment.isExternalStorageManager()) {
+                try {
+                    val intent = Intent(
+                        android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
+                    )
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    // Fallback: try the action version
+                    try {
+                        val intent = Intent().apply {
+                            action = android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
+                            data = android.net.Uri.parse("package:" + packageName)
+                        }
+                        startActivity(intent)
+                    } catch (_: Exception) {
+                        Log.w("MainActivity", "Cannot redirect to manage storage settings", e)
+                        // User can manually enable in Settings → Apps → FileManager → All files access
+                    }
+                }
+            } else {
+                _allPermissionsGranted = true
+            }
+        } else {
+            _allPermissionsGranted = true
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -106,14 +153,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
             FileManagerTheme(darkTheme = darkMode) {
-                val needsPermission = PERMISSIONS.any {
+                val needsPermission = MEDIA_PERMISSIONS.any {
                     ContextCompat.checkSelfPermission(this, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
                 }
 
                 if (needsPermission && !_allPermissionsGranted) {
                     PermissionRequestScreen()
                     LaunchedEffect(Unit) {
-                        permissionLauncher.launch(PERMISSIONS)
+                        mediaPermissionLauncher.launch(MEDIA_PERMISSIONS)
                     }
                 } else {
                     _allPermissionsGranted = true
@@ -126,12 +173,15 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (!_allPermissionsGranted) {
-            val needsPermission = PERMISSIONS.any {
+            val needsPermission = MEDIA_PERMISSIONS.any {
                 ContextCompat.checkSelfPermission(this, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
             }
             if (needsPermission) {
-                permissionLauncher.launch(PERMISSIONS)
+                mediaPermissionLauncher.launch(MEDIA_PERMISSIONS)
             }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Re-check MANAGE_EXTERNAL_STORAGE on resume
+            checkManageStorage()
         }
     }
 }
@@ -161,6 +211,7 @@ private fun FileManagerAppNavHost(
 ) {
     val backStackEntry = navController.currentBackStackEntryAsState()
     var showMoreSheet by remember { mutableStateOf(false) }
+    var showSidebar by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -209,7 +260,8 @@ private fun FileManagerAppNavHost(
                     coroutineScope.launch {
                         snackbarHostState.showSnackbar(message ?: "")
                     }
-                }
+                },
+                onOpenSidebar = { showSidebar = true }
             )
         }
 
@@ -366,6 +418,27 @@ private fun FileManagerAppNavHost(
                 navController.navigate(BottomNavRoute.SETTINGS.route)
             },
             onDismiss = { showMoreSheet = false }
+        )
+    }
+
+    // Sidebar drawer — only shown on the BROWSER route
+    if (showSidebar) {
+        val browserEntry = navController.getBackStackEntry(BottomNavRoute.BROWSER.route)
+        val sidebarViewModel: SidebarViewModel = hiltViewModel(browserEntry)
+        val mainViewModel: MainViewModel = hiltViewModel(browserEntry)
+        val uiState by mainViewModel.uiState.collectAsState()
+        SidebarDrawer(
+            viewModel = sidebarViewModel,
+            currentPath = uiState.currentPath,
+            onNavigateToFolder = { path ->
+                mainViewModel.navigateToPath(path)
+                showSidebar = false
+            },
+            onOpenSettings = {
+                showSidebar = false
+                navController.navigate(BottomNavRoute.SETTINGS.route)
+            },
+            onDismiss = { showSidebar = false }
         )
     }
 }

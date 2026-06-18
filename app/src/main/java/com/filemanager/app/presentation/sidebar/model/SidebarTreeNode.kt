@@ -12,14 +12,14 @@ data class SidebarTreeNode(
     var childrenLoaded: Boolean = false,
     var children: List<SidebarTreeNode> = emptyList()
 ) {
-    /** Whether this node can be expanded (has children or not yet loaded). */
+    /** Whether this node can be expanded (is a directory). */
     val canExpand: Boolean
         get() = isDirectory
 
     /** Whether this node has any expandable descendants in its subtree. */
     val hasExpandableDescendants: Boolean
         get() = if (childrenLoaded) {
-            children.any { it.isDirectory && it.canExpand }
+            children.any { it.isDirectory }
         } else {
             true // Assume expandable until we load children
         }

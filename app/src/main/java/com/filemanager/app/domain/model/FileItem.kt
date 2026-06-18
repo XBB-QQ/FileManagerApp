@@ -13,9 +13,10 @@ data class FileItem(
     val lastModified: Long,        // epoch millis
     val isHidden: Boolean,
     val mimeType: String? = null,
-    val childCount: Int? = null    // only for directories: number of children
+    val childCount: Int? = null,  // only for directories: number of children
+    val uri: android.net.Uri? = null  // SAF URI when using DocumentFile, null for regular file paths
 ) {
-    val extension: String = if (path.contains('.')) path.substringAfterLast('.', "").lowercase() else ""
+    val extension: String = if (name.contains('.')) name.substringAfterLast('.', "").lowercase() else ""
 
     val humanReadableSize: String
         get() = when {

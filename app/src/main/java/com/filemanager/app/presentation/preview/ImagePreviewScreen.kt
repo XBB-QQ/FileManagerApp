@@ -98,18 +98,58 @@ private fun FileInfoBottomSheet(
     filePath: String,
     onDismiss: () -> Unit
 ) {
-    val file = File(filePath)
+    val context = LocalContext.current
+    val file = runCatching { File(filePath) }.getOrNull()
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("文件信息") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                FileInfoRow("文件名", file.name)
-                FileInfoRow("路径", file.absolutePath)
-                FileInfoRow("大小", formatSize(file.length()))
-                FileInfoRow("修改时间", file.lastModified().toDateString())
+                FileInfoRow("文件名", File(filePath).name)
+                if (file != null && file.exists()) {
+                    FileInfoRow("路径", file.absolutePath)
+                    FileInfoRow("大小", formatSize(file.length()))
+                    FileInfoRow("修改时间", file.lastModified().toDateString())
+                } else {
+                    // SAF/content URI — try to get info from ContentResolver
+                    val uri = android.net.Uri.parse(filePath)
+                    val resolver = context.contentResolver
+                    var mimeType by remember { mutableStateOf(resolver.getType(uri)) }
+                    var fileSize by remember { mutableStateOf<Long?>(null) }
+                    var lastModified by remember { mutableStateOf<Long?>(null) }
+
+                    // Try to get file size and last modified from URI
+                    try {
+                        resolver.openInputStream(uri)?.use { stream ->
+                            fileSize = stream.available().toLong()
+                        }
+                    } catch (_: Exception) {}
+
+                    try {
+                        resolver.query(
+                            uri,
+                            arrayOf(
+                                android.provider.OpenableColumns.DISPLAY_NAME,
+                                android.provider.OpenableColumns.SIZE
+                            ),
+                            null, null
+                        )?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val nameIdx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                                if (nameIdx >= 0) mimeType = cursor.getString(nameIdx)
+                                val sizeIdx = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                                if (sizeIdx >= 0) fileSize = cursor.getLong(sizeIdx)
+                            }
+                        }
+                    } catch (_: Exception) {}
+
+                    FileInfoRow("路径", filePath)
+                    FileInfoRow("大小", fileSize?.let { formatSize(it) } ?: "未知")
+                    FileInfoRow("修改时间", lastModified?.toDateString() ?: "未知")
+                }
                 if (filePath.contains('.')) {
-                    FileInfoRow("扩展名", file.extension)
+                    FileInfoRow("扩展名", filePath.substringAfterLast('.', ""))
                 }
             }
         },

@@ -3,6 +3,7 @@ package com.filemanager.app.presentation.sidebar
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.filemanager.app.domain.model.FileItem
+import com.filemanager.app.domain.model.FileType
 import com.filemanager.app.domain.model.StorageInfo
 import com.filemanager.app.domain.repository.FavoriteRepository
 import com.filemanager.app.domain.repository.FileRepository
@@ -15,7 +16,7 @@ import javax.inject.Inject
 
 /**
  * ViewModel for the sidebar folder tree navigation.
- * Manages folder tree per storage device, favorites, and storage switching.
+ * Manages folder trees per storage device, favorites, and storage switching.
  */
 @HiltViewModel
 class SidebarViewModel @Inject constructor(
@@ -23,7 +24,7 @@ class SidebarViewModel @Inject constructor(
     private val favoriteRepository: FavoriteRepository
 ) : ViewModel() {
 
-    // Current selected path (synced from MainViewModel in production)
+    /** Current selected path (synced from MainViewModel). */
     private val _currentPath = MutableStateFlow("/")
     val currentPath: StateFlow<String> = _currentPath.asStateFlow()
 
@@ -32,36 +33,35 @@ class SidebarViewModel @Inject constructor(
         _currentPath.value = path
     }
 
-    // Storage devices
+    /** Storage devices loaded from the system. */
     private val _storages = MutableStateFlow<List<StorageInfo>>(emptyList())
     val storages: StateFlow<List<StorageInfo>> = _storages.asStateFlow()
 
-    // Folder trees keyed by storage index
+    /** Folder trees keyed by storage index. */
     private val _folderTrees = MutableStateFlow<Map<Int, List<SidebarTreeNode>>>(emptyMap())
     val folderTrees: StateFlow<Map<Int, List<SidebarTreeNode>>> = _folderTrees.asStateFlow()
 
-    // Active storage tab
+    /** Active storage tab index. */
     private val _activeStorageIndex = MutableStateFlow(0)
     val activeStorageIndex: StateFlow<Int> = _activeStorageIndex.asStateFlow()
 
-    // Favorites (directory-only)
+    /** Favorites filtered to directories only. */
     val favoriteDirectories: StateFlow<List<FileItem>> = favoriteRepository
         .getFavorites()
-        .map { items -> items.filter { it.type == com.filemanager.app.domain.model.FileType.DIRECTORY } }
+        .map { items -> items.filter { it.type == FileType.DIRECTORY } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
         loadStorageInfo()
     }
 
-    /** Load storage info and build initial folder trees. */
+    /** Load storage info and build initial tree for the first storage. */
     private fun loadStorageInfo() {
         viewModelScope.launch {
             fileRepository.getStorageInfo()
                 .collect { result ->
                     result.onSuccess { storages ->
                         _storages.value = storages
-                        // Build initial tree for first storage
                         if (storages.isNotEmpty()) {
                             rebuildTree(storages[0].path)
                         }
@@ -79,8 +79,16 @@ class SidebarViewModel @Inject constructor(
         }
     }
 
+    /** Toggle expand/collapse of a node. Loads children on first expand. */
+    fun toggleExpand(storageIndex: Int, node: SidebarTreeNode) {
+        val willExpand = TreeUtils.toggleExpand(node)
+        if (willExpand && !node.childrenLoaded) {
+            expandNode(storageIndex, node)
+        }
+    }
+
     /** Expand a node and lazily load its children. */
-    fun expandNode(storageIndex: Int, node: SidebarTreeNode) {
+    private fun expandNode(storageIndex: Int, node: SidebarTreeNode) {
         viewModelScope.launch {
             val result = TreeUtils.loadChildren(node, fileRepository)
             result.onSuccess { children ->
@@ -98,15 +106,7 @@ class SidebarViewModel @Inject constructor(
         }
     }
 
-    /** Toggle expand/collapse of a node. Loads children on first expand. */
-    fun toggleExpand(storageIndex: Int, node: SidebarTreeNode) {
-        val willExpand = TreeUtils.toggleExpand(node)
-        if (willExpand && !node.childrenLoaded) {
-            expandNode(storageIndex, node)
-        }
-    }
-
-    /** Switch the active storage tab. */
+    /** Switch the active storage tab and rebuild its tree. */
     fun switchStorage(index: Int) {
         _activeStorageIndex.value = index
         val storages = _storages.value

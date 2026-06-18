@@ -89,6 +89,9 @@ dependencies {
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
+    // DocumentFile — reliable file enumeration on Android 10+
+    implementation("androidx.documentfile:documentfile:1.0.1")
+
     // Testing
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

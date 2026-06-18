@@ -8,6 +8,7 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import java.io.File
@@ -25,9 +26,17 @@ fun TextPreviewScreen(
     var isEditMode by remember { mutableStateOf(false) }
 
     // Load file content
+    val context = LocalContext.current
     LaunchedEffect(filePath) {
+        val uri = android.net.Uri.parse(filePath)
+        val isContentUri = uri.scheme == "content" || uri.scheme == null
         try {
-            textContent = File(filePath).readText()
+            textContent = if (isContentUri) {
+                context.contentResolver
+                    .openInputStream(uri)?.bufferedReader()?.readText() ?: "无法读取文件"
+            } else {
+                File(filePath).readText()
+            }
         } catch (e: Exception) {
             textContent = "无法读取文件: ${e.message}"
         }
