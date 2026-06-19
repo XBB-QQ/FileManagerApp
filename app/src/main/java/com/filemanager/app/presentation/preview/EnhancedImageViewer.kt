@@ -106,51 +106,91 @@ private fun BasicImageViewer(
     modifier: Modifier = Modifier
 ) {
     var zoomState by remember { mutableStateOf(ZoomState()) }
+    val context = LocalContext.current
+
+    // Determine if filePath is a content:// URI or file path
+    val uri = android.net.Uri.parse(filePath)
+    val isContentUri = uri.scheme == "content" || uri.scheme == null
 
     Box(
         modifier = modifier,
         contentAlignment = Alignment.Center
     ) {
-        AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
-                .data(filePath)
-                .build(),
-            contentDescription = "Image preview",
-            modifier = modifier
-                .pointerInput(Unit) {
-                    detectTransformGestures(
-                        onGesture = { center, pan, zoom, _ ->
-                            val newScale = (zoomState.scale * zoom).coerceIn(1f, 10f)
-                            zoomState = zoomState.copy(
-                                scale = newScale,
-                                offsetX = (zoomState.offsetX + pan.x).coerceIn(-1000f, 1000f),
-                                offsetY = (zoomState.offsetY + pan.y).coerceIn(-1000f, 1000f)
-                            )
-                        }
-                    )
-                }
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onDoubleTap = {
-                            zoomState = if (zoomState.scale > 1f) {
-                                ZoomState() // double-tap to reset
-                            } else {
-                                ZoomState(scale = 2.5f) // double-tap to zoom in
+        if (isContentUri) {
+            // Content URI — load via ContentResolver
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(uri)
+                    .build(),
+                contentDescription = "Image preview",
+                modifier = modifier
+                    .pointerInput(Unit) {
+                        detectTransformGestures(
+                            onGesture = { center, pan, zoom, _ ->
+                                val newScale = (zoomState.scale * zoom).coerceIn(1f, 10f)
+                                zoomState = zoomState.copy(
+                                    scale = newScale,
+                                    offsetX = (zoomState.offsetX + pan.x).coerceIn(-1000f, 1000f),
+                                    offsetY = (zoomState.offsetY + pan.y).coerceIn(-1000f, 1000f)
+                                )
                             }
-                        }
-                    )
-                }
-                .graphicsLayer {
-                    scaleX = zoomState.scale
-                    scaleY = zoomState.scale
-                    translationX = zoomState.offsetX
-                    translationY = zoomState.offsetY
-                }
-                .clickable {
-                    zoomState = ZoomState()
-                },
-            contentScale = ContentScale.Fit
-        )
+                        )
+                    }
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onDoubleTap = {
+                                zoomState = if (zoomState.scale > 1f) ZoomState()
+                                else ZoomState(scale = 2.5f)
+                            }
+                        )
+                    }
+                    .graphicsLayer {
+                        scaleX = zoomState.scale
+                        scaleY = zoomState.scale
+                        translationX = zoomState.offsetX
+                        translationY = zoomState.offsetY
+                    }
+                    .clickable { zoomState = ZoomState() },
+                contentScale = ContentScale.Fit
+            )
+        } else {
+            // File path — load via coil
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(filePath)
+                    .build(),
+                contentDescription = "Image preview",
+                modifier = modifier
+                    .pointerInput(Unit) {
+                        detectTransformGestures(
+                            onGesture = { center, pan, zoom, _ ->
+                                val newScale = (zoomState.scale * zoom).coerceIn(1f, 10f)
+                                zoomState = zoomState.copy(
+                                    scale = newScale,
+                                    offsetX = (zoomState.offsetX + pan.x).coerceIn(-1000f, 1000f),
+                                    offsetY = (zoomState.offsetY + pan.y).coerceIn(-1000f, 1000f)
+                                )
+                            }
+                        )
+                    }
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onDoubleTap = {
+                                zoomState = if (zoomState.scale > 1f) ZoomState()
+                                else ZoomState(scale = 2.5f)
+                            }
+                        )
+                    }
+                    .graphicsLayer {
+                        scaleX = zoomState.scale
+                        scaleY = zoomState.scale
+                        translationX = zoomState.offsetX
+                        translationY = zoomState.offsetY
+                    }
+                    .clickable { zoomState = ZoomState() },
+                contentScale = ContentScale.Fit
+            )
+        }
 
         if (zoomState.scale > 1f) {
             Text(
@@ -181,6 +221,9 @@ private fun FullscreenImageViewer(
     var showControls by remember { mutableStateOf(true) }
     var zoomState by remember { mutableStateOf(ZoomState()) }
     var showActions by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val uri = android.net.Uri.parse(filePath)
+    val isContentUri = uri.scheme == "content" || uri.scheme == null
 
     Box(
         modifier = Modifier
@@ -200,35 +243,67 @@ private fun FullscreenImageViewer(
                 )
             }
     ) {
-        AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
-                .data(filePath)
-                .build(),
-            contentDescription = "Full image",
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTransformGestures(
-                        onGesture = { center, pan, zoom, _ ->
-                            val newScale = zoomState.scale * zoom
-                            val clampedScale = newScale.coerceIn(1f, 10f)
-                            zoomState = zoomState.copy(
-                                scale = clampedScale,
-                                offsetX = (zoomState.offsetX + pan.x).coerceIn(-1000f, 1000f),
-                                offsetY = (zoomState.offsetY + pan.y).coerceIn(-1000f, 1000f)
-                            )
-                        }
-                    )
-                }
-                .graphicsLayer {
-                    scaleX = zoomState.scale
-                    scaleY = zoomState.scale
-                    translationX = zoomState.offsetX
-                    translationY = zoomState.offsetY
-                }
-                .clickable { zoomState = ZoomState() },
-            contentScale = ContentScale.Fit
-        )
+        if (isContentUri) {
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(uri)
+                    .build(),
+                contentDescription = "Full image",
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTransformGestures(
+                            onGesture = { center, pan, zoom, _ ->
+                                val newScale = zoomState.scale * zoom
+                                val clampedScale = newScale.coerceIn(1f, 10f)
+                                zoomState = zoomState.copy(
+                                    scale = clampedScale,
+                                    offsetX = (zoomState.offsetX + pan.x).coerceIn(-1000f, 1000f),
+                                    offsetY = (zoomState.offsetY + pan.y).coerceIn(-1000f, 1000f)
+                                )
+                            }
+                        )
+                    }
+                    .graphicsLayer {
+                        scaleX = zoomState.scale
+                        scaleY = zoomState.scale
+                        translationX = zoomState.offsetX
+                        translationY = zoomState.offsetY
+                    }
+                    .clickable { zoomState = ZoomState() },
+                contentScale = ContentScale.Fit
+            )
+        } else {
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(filePath)
+                    .build(),
+                contentDescription = "Full image",
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTransformGestures(
+                            onGesture = { center, pan, zoom, _ ->
+                                val newScale = zoomState.scale * zoom
+                                val clampedScale = newScale.coerceIn(1f, 10f)
+                                zoomState = zoomState.copy(
+                                    scale = clampedScale,
+                                    offsetX = (zoomState.offsetX + pan.x).coerceIn(-1000f, 1000f),
+                                    offsetY = (zoomState.offsetY + pan.y).coerceIn(-1000f, 1000f)
+                                )
+                            }
+                        )
+                    }
+                    .graphicsLayer {
+                        scaleX = zoomState.scale
+                        scaleY = zoomState.scale
+                        translationX = zoomState.offsetX
+                        translationY = zoomState.offsetY
+                    }
+                    .clickable { zoomState = ZoomState() },
+                contentScale = ContentScale.Fit
+            )
+        }
 
         if (showControls) {
             Column {
@@ -307,18 +382,82 @@ private fun FileInfoBottomSheet(
     filePath: String,
     onDismiss: () -> Unit
 ) {
-    val file = File(filePath)
+    val context = LocalContext.current
+    val uri = android.net.Uri.parse(filePath)
+    val isContentUri = uri.scheme == "content"
+
+    // Safe file name
+    val fileName = runCatching {
+        if (isContentUri) {
+            uri.lastPathSegment?.takeIf { it.isNotBlank() } ?: "未知文件"
+        } else {
+            java.io.File(filePath).takeIf { it.exists() }?.name ?: "未知文件"
+        }
+    }.getOrDefault("未知文件")
+
+    // Safe file size
+    val fileSizeText = runCatching {
+        if (isContentUri) {
+            val len = context.contentResolver.openInputStream(uri)?.available()?.toLong() ?: -1
+            if (len > 0) formatSize(len) else "未知"
+        } else {
+            val f = java.io.File(filePath)
+            if (f.exists()) formatSize(f.length()) else "文件不存在"
+        }
+    }.getOrDefault("未知")
+
+    // Safe modification time
+    val modTimeText = runCatching {
+        if (isContentUri) {
+            var cursor: android.database.Cursor? = null
+            try {
+                cursor = context.contentResolver.query(uri, null, null, null, null)
+                val dataCol = cursor?.getColumnIndex("_data") ?: -1
+                val ms = if (dataCol >= 0 && cursor != null && cursor.moveToFirst()) {
+                    val path = cursor.getString(dataCol)
+                    java.io.File(path).lastModified()
+                } else null
+                if (ms != null && ms > 0) {
+                    java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+                        .format(java.util.Date(ms))
+                } else "未知"
+            } catch (_: Exception) {
+                "未知"
+            } finally {
+                cursor?.close()
+            }
+        } else {
+            val f = java.io.File(filePath)
+            if (f.exists()) {
+                java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+                    .format(java.util.Date(f.lastModified()))
+            } else "未知"
+        }
+    }.getOrDefault("未知")
+
+    // Safe file extension
+    val fileExt = runCatching {
+        if (isContentUri) {
+            val base = uri.lastPathSegment ?: ""
+            if (base.contains('.')) base.substringAfterLast('.') else ""
+        } else {
+            if (filePath.contains('.')) filePath.substringAfterLast('.') else ""
+        }
+    }.getOrDefault("")
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("文件信息") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                FileInfoRow("文件名", file.name)
-                FileInfoRow("路径", file.absolutePath)
-                FileInfoRow("大小", formatSize(file.length()))
-                FileInfoRow("修改时间", file.lastModified().toDateString())
-                if (filePath.contains('.')) {
-                    FileInfoRow("扩展名", file.extension)
+                FileInfoRow("文件名", fileName)
+                if (!isContentUri) {
+                    FileInfoRow("路径", filePath)
+                }
+                FileInfoRow("大小", fileSizeText)
+                FileInfoRow("修改时间", modTimeText)
+                if (fileExt.isNotBlank()) {
+                    FileInfoRow("扩展名", fileExt)
                 }
             }
         },

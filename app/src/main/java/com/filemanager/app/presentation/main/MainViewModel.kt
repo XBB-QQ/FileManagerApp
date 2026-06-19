@@ -68,7 +68,7 @@ class MainViewModel @Inject constructor(
     private val _currentLoadPath = MutableStateFlow<String?>(null)
 
     init {
-        _currentLoadPath.value = "/"
+        _currentLoadPath.value = "/storage/emulated/0"
         loadStorageInfo()
 
         viewModelScope.launch {
@@ -139,7 +139,8 @@ class MainViewModel @Inject constructor(
             val parentPath = "/" + parts.dropLast(1).joinToString("/")
             loadFiles(parentPath)
         } else {
-            loadFiles("/")
+            // At root level, stay at /storage/emulated/0
+            loadFiles("/storage/emulated/0")
         }
     }
 
@@ -386,7 +387,7 @@ class MainViewModel @Inject constructor(
         return if (parts.size > 1) {
             "/" + parts.dropLast(1).joinToString("/")
         } else {
-            "/"
+            "/storage/emulated/0"
         }
     }
 

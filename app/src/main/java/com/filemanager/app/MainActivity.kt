@@ -85,6 +85,11 @@ private val MEDIA_PERMISSIONS = run {
 
 /**
  * Main Activity — entry point of the app.
+ *
+ * Permission flow:
+ * 1. Request media permissions (READ_MEDIA_IMAGES/VIDEO/AUDIO on Android 13+)
+ * 2. Request MANAGE_EXTERNAL_STORAGE → guide user to settings page
+ * 3. On resume, re-check isExternalStorageManager() to update state
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -94,52 +99,66 @@ class MainActivity : ComponentActivity() {
     ) { permissions ->
         val allGranted = permissions.values.all { it }
         Log.d("MainActivity", "Media permissions granted: $permissions")
-        _allPermissionsGranted = allGranted
+        _mediaPermissionsGranted = allGranted
         if (allGranted) {
-            checkManageStorage()
+            requestManageStorage()
         }
     }
 
-    private val manageStorageLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        Log.d("MainActivity", "Manage storage result: ${it.resultCode}")
-        _allPermissionsGranted = true
-    }
-
-    private var _allPermissionsGranted by mutableStateOf(false)
+    private var _mediaPermissionsGranted by mutableStateOf(false)
+    private var _manageStorageGuided by mutableStateOf(false)
 
     @Inject
     lateinit var appPreferences: AppPreferences
 
-    private fun checkManageStorage() {
+    /**
+     * Guide user to MANAGE_EXTERNAL_STORAGE settings page.
+     * After user returns from settings, onResume() will re-check and grant the flag.
+     */
+    private fun requestManageStorage() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
-                try {
-                    val intent = Intent(
-                        android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
-                    )
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    // Fallback: try the action version
-                    try {
-                        val intent = Intent().apply {
-                            action = android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
-                            data = android.net.Uri.parse("package:" + packageName)
-                        }
-                        startActivity(intent)
-                    } catch (_: Exception) {
-                        Log.w("MainActivity", "Cannot redirect to manage storage settings", e)
-                        // User can manually enable in Settings → Apps → FileManager → All files access
-                    }
-                }
-            } else {
+            if (Environment.isExternalStorageManager()) {
                 _allPermissionsGranted = true
+                Log.d("MainActivity", "MANAGE_EXTERNAL_STORAGE already granted")
+                return
+            }
+            if (_manageStorageGuided) {
+                // Already guided user once, don't spam
+                return
+            }
+            _manageStorageGuided = true
+            try {
+                val intent = Intent(
+                    android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
+                )
+                startActivity(intent)
+                Log.d("MainActivity", "Guided user to MANAGE_EXTERNAL_STORAGE settings")
+            } catch (e: Exception) {
+                try {
+                    val intent = Intent().apply {
+                        action = android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
+                        data = android.net.Uri.parse("package:" + packageName)
+                    }
+                    startActivity(intent)
+                } catch (_: Exception) {
+                    Log.w("MainActivity", "Cannot redirect to manage storage settings", e)
+                }
             }
         } else {
             _allPermissionsGranted = true
         }
     }
+
+    private fun checkManageStorageOnResume() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (Environment.isExternalStorageManager()) {
+                _allPermissionsGranted = true
+                Log.d("MainActivity", "MANAGE_EXTERNAL_STORAGE granted on resume")
+            }
+        }
+    }
+
+    private var _allPermissionsGranted by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -157,13 +176,18 @@ class MainActivity : ComponentActivity() {
                     ContextCompat.checkSelfPermission(this, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
                 }
 
-                if (needsPermission && !_allPermissionsGranted) {
+                if (needsPermission && !_mediaPermissionsGranted && !_allPermissionsGranted) {
                     PermissionRequestScreen()
                     LaunchedEffect(Unit) {
                         mediaPermissionLauncher.launch(MEDIA_PERMISSIONS)
                     }
+                } else if (_mediaPermissionsGranted && !_allPermissionsGranted) {
+                    // Media permissions done, show loading while user redirects to settings
+                    PermissionRequestScreen()
+                    LaunchedEffect(Unit) {
+                        requestManageStorage()
+                    }
                 } else {
-                    _allPermissionsGranted = true
                     FileManagerAppNavHost()
                 }
             }
@@ -173,15 +197,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (!_allPermissionsGranted) {
-            val needsPermission = MEDIA_PERMISSIONS.any {
-                ContextCompat.checkSelfPermission(this, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
-            }
-            if (needsPermission) {
-                mediaPermissionLauncher.launch(MEDIA_PERMISSIONS)
-            }
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            // Re-check MANAGE_EXTERNAL_STORAGE on resume
-            checkManageStorage()
+            checkManageStorageOnResume()
         }
     }
 }
@@ -216,6 +232,10 @@ private fun FileManagerAppNavHost(
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
 
+    // Shared state for file preview navigation (avoids URL encoding issues with file paths)
+    var previewFile by remember { mutableStateOf<Pair<String, String?>?>(null) }
+    var previewTextFile by remember { mutableStateOf<String?>(null) }
+
     androidx.navigation.compose.NavHost(
         navController = navController,
         startDestination = BottomNavRoute.HOME.route
@@ -240,10 +260,12 @@ private fun FileManagerAppNavHost(
         composable(BottomNavRoute.BROWSER.route) {
             MainScreenContent(
                 onPreviewFile = { path, mimeType ->
-                    navController.navigate("previewImage/$path/${mimeType ?: ""}")
+                    previewFile = path to mimeType
+                    navController.navigate("previewImage")
                 },
                 onOpenTextFile = { path ->
-                    navController.navigate("previewText/$path")
+                    previewTextFile = path
+                    navController.navigate("previewText")
                 },
                 onNavigateToSearch = {
                     navController.navigate(BottomNavRoute.SEARCH.route) {
@@ -268,7 +290,8 @@ private fun FileManagerAppNavHost(
         composable(BottomNavRoute.LATEST.route) {
             LatestScreen(
                 onFileSelected = { path, mimeType ->
-                    navController.navigate("previewImage/$path/${mimeType ?: ""}")
+                    previewFile = path to mimeType
+                    navController.navigate("previewImage")
                 },
                 onBack = { navController.popBackStack() }
             )
@@ -277,7 +300,8 @@ private fun FileManagerAppNavHost(
         composable(BottomNavRoute.SEARCH.route) {
             SearchScreen(
                 onFileSelected = { path, mimeType ->
-                    navController.navigate("previewImage/$path/${mimeType ?: ""}")
+                    previewFile = path to mimeType
+                    navController.navigate("previewImage")
                 },
                 onBack = { navController.popBackStack() }
             )
@@ -288,7 +312,8 @@ private fun FileManagerAppNavHost(
         composable(BottomNavRoute.RECENT.route) {
             RecentScreen(
                 onFileSelected = { path, mimeType ->
-                    navController.navigate("previewImage/$path/${mimeType ?: ""}")
+                    previewFile = path to mimeType
+                    navController.navigate("previewImage")
                 },
                 onBack = { navController.popBackStack() }
             )
@@ -297,7 +322,8 @@ private fun FileManagerAppNavHost(
         composable(BottomNavRoute.COLLECT.route) {
             CollectScreen(
                 onFileSelected = { path, mimeType ->
-                    navController.navigate("previewImage/$path/${mimeType ?: ""}")
+                    previewFile = path to mimeType
+                    navController.navigate("previewImage")
                 },
                 onBack = { navController.popBackStack() }
             )
@@ -317,51 +343,61 @@ private fun FileManagerAppNavHost(
 
         // ===== File preview routes =====
 
-        composable(
-            route = "previewImage/{path}/{mimeType}",
-            arguments = listOf(
-                navArgument("path") { defaultValue = "" },
-                navArgument("mimeType") { defaultValue = "" }
-            )
-        ) { backStackEntry ->
-            val path = backStackEntry.arguments?.getString("path") ?: ""
-            val mimeType = backStackEntry.arguments?.getString("mimeType") ?: ""
-            val category = mimeType.split('/').firstOrNull() ?: "unknown"
+        composable("previewImage") {
+            val file = previewFile
+            if (file != null) {
+                val path = file.first
+                val mimeType = file.second
+                val category = mimeType?.split('/')?.firstOrNull() ?: "unknown"
 
-            when (category) {
-                "image" -> EnhancedImageViewer(
-                    filePath = path,
-                    mimeType = mimeType,
-                    onBack = { navController.popBackStack() },
-                    onShare = { shareFile(context, path, coroutineScope, snackbarHostState) }
-                )
-                "video" -> EnhancedVideoPlayer(
-                    videoPath = path,
-                    onBack = { navController.popBackStack() }
-                )
-                "audio" -> AudioPreviewScreen(
-                    audioPath = path,
-                    onBack = { navController.popBackStack() }
-                )
-                else -> {
-                    // Default: try to open as text, otherwise show a generic viewer
-                    TextPreviewScreen(
+                when (category) {
+                    "image" -> EnhancedImageViewer(
                         filePath = path,
-                        onBack = { navController.popBackStack() }
+                        mimeType = mimeType,
+                        onBack = {
+                            previewFile = null
+                            navController.popBackStack()
+                        },
+                        onShare = { shareFile(context, path, coroutineScope, snackbarHostState) }
                     )
+                    "video" -> EnhancedVideoPlayer(
+                        videoPath = path,
+                        onBack = {
+                            previewFile = null
+                            navController.popBackStack()
+                        }
+                    )
+                    "audio" -> AudioPreviewScreen(
+                        audioPath = path,
+                        onBack = {
+                            previewFile = null
+                            navController.popBackStack()
+                        }
+                    )
+                    else -> {
+                        TextPreviewScreen(
+                            filePath = path,
+                            onBack = {
+                                previewFile = null
+                                navController.popBackStack()
+                            }
+                        )
+                    }
                 }
             }
         }
 
-        composable(
-            route = "previewText/{path}",
-            arguments = listOf(navArgument("path") { defaultValue = "" })
-        ) { backStackEntry ->
-            val path = backStackEntry.arguments?.getString("path") ?: ""
-            TextPreviewScreen(
-                filePath = path,
-                onBack = { navController.popBackStack() }
-            )
+        composable("previewText") {
+            val path = previewTextFile
+            if (path != null) {
+                TextPreviewScreen(
+                    filePath = path,
+                    onBack = {
+                        previewTextFile = null
+                        navController.popBackStack()
+                    }
+                )
+            }
         }
     }
 
